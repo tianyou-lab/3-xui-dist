@@ -81,17 +81,71 @@ restart_panel() {
     fi
 }
 
+# 多源安装 acme.sh（get.acme.sh 在部分网络下不可用，故提供 GitHub 源码包 / git clone 兜底）
+install_acme() {
+    local domain="$1"
+    local acme="$HOME/.acme.sh/acme.sh"
+    local log=/tmp/acme-install.log
+    local ok=0
+
+    if [[ -x "$acme" ]]; then
+        ok "acme.sh 已存在: $acme"
+        return 0
+    fi
+
+    info "安装 acme.sh（日志: $log）..."
+    : > "$log"
+
+    # 方式 1：官方一键脚本
+    if curl -fsSL --max-time 60 https://get.acme.sh -o /tmp/get-acme.sh 2>>"$log"; then
+        if sh /tmp/get-acme.sh email="admin@$domain" >>"$log" 2>&1 && [[ -x "$acme" ]]; then ok=1; fi
+    else
+        echo "[WARN] 无法下载 https://get.acme.sh" >>"$log"
+    fi
+
+    # 方式 2：GitHub 源码包（官方脚本自身的兜底方式）
+    if [[ $ok -ne 1 ]]; then
+        info "改用 GitHub 源码包安装 acme.sh ..."
+        if curl -fsSL --max-time 180 https://github.com/acmesh-official/acme.sh/archive/master.tar.gz -o /tmp/acme-master.tar.gz 2>>"$log"; then
+            rm -rf /tmp/acme.sh-master
+            tar xzf /tmp/acme-master.tar.gz -C /tmp >>"$log" 2>&1
+            if [[ -d /tmp/acme.sh-master ]]; then
+                if ( cd /tmp/acme.sh-master && ./acme.sh --install --home "$HOME/.acme.sh" --accountemail "admin@$domain" >>"$log" 2>&1 ) && [[ -x "$acme" ]]; then ok=1; fi
+            fi
+        else
+            echo "[WARN] 无法下载 acme.sh 源码包（github.com 不可达）" >>"$log"
+        fi
+    fi
+
+    # 方式 3：git clone
+    if [[ $ok -ne 1 ]] && command -v git >/dev/null; then
+        info "改用 git clone 安装 acme.sh ..."
+        rm -rf /tmp/acme-git
+        if git clone --depth=1 https://github.com/acmesh-official/acme.sh.git /tmp/acme-git >>"$log" 2>&1; then
+            if ( cd /tmp/acme-git && ./acme.sh --install --home "$HOME/.acme.sh" --accountemail "admin@$domain" >>"$log" 2>&1 ) && [[ -x "$acme" ]]; then ok=1; fi
+        fi
+    fi
+
+    if [[ $ok -ne 1 ]]; then
+        err "acme.sh 安装失败：无法访问 get.acme.sh / github.com"
+        echo "----- 安装日志（末尾 20 行）-----"
+        tail -n 20 "$log" 2>/dev/null
+        echo "------------------------------"
+        warn "可手动安装后重试本脚本，或手动签发证书后执行:"
+        warn "  x-ui cert -webCert /root/cert/<域名>/fullchain.pem -webCertKey /root/cert/<域名>/privkey.pem"
+        return 1
+    fi
+    ok "acme.sh 安装成功"
+    return 0
+}
+
 setup_certificate() {
     local domain="$1"
     local acme="$HOME/.acme.sh/acme.sh"
     local dir="/root/cert/$domain"
     local mode="" rc=0
 
-    info "安装/检查 acme.sh ..."
-    if [[ ! -x "$acme" ]]; then
-        curl -fsSL https://get.acme.sh | sh -s email="admin@$domain" >/dev/null 2>&1
-    fi
-    [[ -x "$acme" ]] || { err "acme.sh 安装失败，跳过证书配置"; return 1; }
+    install_acme "$domain" || return 1
     "$acme" --set-default-ca --server letsencrypt >/dev/null 2>&1
 
     if ! port_busy 80; then
@@ -104,6 +158,14 @@ setup_certificate() {
         return 1
     fi
     info "验证方式: $mode"
+    if [[ "$mode" == "standalone" ]] && ! command -v socat >/dev/null; then
+        warn "缺少 socat（standalone 模式必需），尝试安装..."
+        if command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y -qq socat >/dev/null 2>&1 || true
+        elif command -v dnf >/dev/null; then dnf install -y -q socat >/dev/null 2>&1 || true
+        elif command -v yum >/dev/null; then yum install -y -q socat >/dev/null 2>&1 || true
+        fi
+        command -v socat >/dev/null || warn "socat 仍不可用，standalone 可能失败"
+    fi
 
     info "正在向 Let's Encrypt 申请证书（约 10~60 秒）..."
     if [[ "$mode" == "standalone" ]]; then
@@ -143,13 +205,15 @@ setup_certificate() {
 }
 
 info "步骤 1/10: 检查依赖..."
+DEPS="curl tar ca-certificates socat openssl cron git"
 if command -v apt-get >/dev/null; then
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl tar ca-certificates >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $DEPS >/dev/null 2>&1 || \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl tar ca-certificates >/dev/null 2>&1 || true
 elif command -v dnf >/dev/null; then
-    dnf install -y -q curl tar ca-certificates >/dev/null 2>&1 || true
+    dnf install -y -q $DEPS >/dev/null 2>&1 || dnf install -y -q curl tar ca-certificates >/dev/null 2>&1 || true
 elif command -v yum >/dev/null; then
-    yum install -y -q curl tar ca-certificates >/dev/null 2>&1 || true
+    yum install -y -q $DEPS >/dev/null 2>&1 || yum install -y -q curl tar ca-certificates >/dev/null 2>&1 || true
 fi
 command -v curl >/dev/null || die "缺少 curl"
 command -v tar  >/dev/null || die "缺少 tar"
