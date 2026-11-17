@@ -29,7 +29,7 @@ PY
 }
 
 echo "==================== X-Panel 连接诊断 ===================="
-echo "脚本版本: v2.1（含入站参数展示 + Reality 回退自测）"
+echo "脚本版本: v2.2（含入站参数、密钥/UUID 核对、Reality 回退自测）"
 date '+时间: %F %T %Z'
 
 PUBIP=$(curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 8 https://ifconfig.me 2>/dev/null || echo "")
@@ -68,6 +68,50 @@ else
         [[ -n "${snis:-}" ]] && echo "         serverNames: $snis"
         [[ -n "${sids:-}" ]] && echo "         shortIds   : $sids"
     done
+fi
+
+echo ""
+echo "---- 4b. Reality 密钥与客户端 UUID（对照分享链接核对）----"
+if command -v python3 >/dev/null && [[ -f "$DB" ]]; then
+    python3 - "$DB" "$XUI_HOME/bin/xray-linux-amd64" <<'PY'
+import sqlite3, json, subprocess, sys
+db, xray = sys.argv[1], sys.argv[2]
+con = sqlite3.connect(db)
+rows = con.execute("select id, port, remark, settings, stream_settings from inbounds").fetchall()
+for i, port, remark, settings, ss in rows:
+    try:
+        d = json.loads(ss or '{}')
+        s = json.loads(settings or '{}')
+    except Exception:
+        continue
+    rs = d.get('realitySettings') or {}
+    if d.get('security') != 'reality':
+        continue
+    priv = rs.get('privateKey') or ''
+    stored_pub = (rs.get('settings') or {}).get('publicKey') or ''
+    derived = ''
+    if priv:
+        try:
+            out = subprocess.run([xray, 'x25519', '-i', priv], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                low = line.lower()
+                # Xray 25.x 输出格式: "Password: <publicKey>"；旧版为 "Public key: <publicKey>"
+                if low.startswith('password:') or low.startswith('public key'):
+                    derived = line.split(':', 1)[1].strip()
+        except Exception:
+            pass
+    print(f"  入站 #{i} 端口 {port} 备注 {remark}  目标 {rs.get('target')}")
+    print(f"    SNI        : {rs.get('serverNames')}")
+    print(f"    shortIds   : {rs.get('shortIds')}")
+    print(f"    pbk(推导)  : {derived or '推导失败'}")
+    print(f"    pbk(配置)  : {stored_pub}")
+    if derived and stored_pub and derived != stored_pub:
+        print("    ⚠️ 推导公钥与配置不一致，建议在面板里重新生成密钥")
+    for c in (s.get('clients') or []):
+        print(f"    客户端     : email={c.get('email')} uuid={c.get('id')} flow={c.get('flow','')}")
+PY
+else
+    warn "缺少 python3 或数据库，跳过"
 fi
 
 echo ""
