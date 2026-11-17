@@ -36,6 +36,15 @@ bash <(curl -fsSL "https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main
 
 逐项比对：网络类型 / 安全类型 / UUID / flow / SNI / shortId / pbk / 域名解析，直接指出哪一项不匹配。
 
+## 换节点端口（高位端口被墙时）
+
+```bash
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/tianyou-lab/3-xui-dist@main/switchport.sh) 443
+```
+
+改入站端口 → 放行新端口 → 重启 xray → 输出新的分享链接（uuid/pbk/sid/sni 全部保留）。
+可选 `--inbound <ID>` 只改某个入站，`--domain <域名>` 指定链接里的主机名。
+
 ## 安装内容
 
 - 静态编译的 `x-ui`（musl 静态链接，无 glibc 依赖，linux/amd64）
