@@ -45,6 +45,15 @@ bash <(curl -fsSL https://cdn.jsdelivr.net/gh/tianyou-lab/3-xui-dist@main/switch
 改入站端口 → 放行新端口 → 重启 xray → 输出新的分享链接（uuid/pbk/sid/sni 全部保留）。
 可选 `--inbound <ID>` 只改某个入站，`--domain <域名>` 指定链接里的主机名。
 
+## IP 被墙 / 直连不通 → Cloudflare 中转
+
+```bash
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/tianyou-lab/3-xui-dist@main/cdnsetup.sh) cdn.你的域名.com
+```
+
+自动创建 VLESS + WebSocket 入站（源站明文 80 端口），并输出 CF 配置步骤与 `wss://` 客户端链接。
+客户端只连 Cloudflare 的 443，不依赖服务器 IP 直连。
+
 ## 安装内容
 
 - 静态编译的 `x-ui`（musl 静态链接，无 glibc 依赖，linux/amd64）
