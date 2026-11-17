@@ -2,8 +2,10 @@
 # X-Panel 在线一键安装（从 GitHub Release 下载）
 #   bash <(curl -fsSL https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main/install.sh)
 # 私有仓库：TOKEN=ghp_xxx bash <(curl -fsSL -H "Authorization: Bearer ghp_xxx" <同上URL>)
-# 可选环境变量：PANEL_PORT WEB_PATH USERNAME PASSWORD DOMAIN
-#               SKIP_HARDEN=1 SKIP_BBR=1 GH_OWNER GH_REPO GH_TAG TOKEN BASE_URL MIRROR
+# 交互式：安装过程中会询问「是否使用域名并自动签发免费证书」
+# 可选环境变量：PANEL_PORT WEB_PATH USERNAME PASSWORD DOMAIN（给了域名则自动申请证书）
+#               SKIP_CERT=1 跳过证书  SKIP_HARDEN=1 SKIP_BBR=1
+#               GH_OWNER GH_REPO GH_TAG TOKEN BASE_URL MIRROR
 set -uo pipefail
 
 # 默认从 GitHub Release 下载（可通过环境变量覆盖）
@@ -27,7 +29,120 @@ die()  { err "$*"; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "请用 root 运行"
 
-info "步骤 1/9: 检查依赖..."
+# ============ 域名与证书相关函数 ============
+validate_domain() {
+    local d="${1:-}"
+    [[ -n "$d" && ${#d} -le 253 ]] || return 1
+    [[ "$d" == *.* ]] || return 1
+    [[ "$d" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]
+}
+
+check_domain_dns() {
+    local domain="$1" server_ip="" domain_ip=""
+    server_ip=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 10 https://ifconfig.me 2>/dev/null)
+    if [[ -z "$server_ip" ]]; then warn "无法获取本机公网 IP，跳过 DNS 校验"; return 0; fi
+    info "本机公网 IP: $server_ip"
+    if command -v dig >/dev/null; then
+        domain_ip=$(dig +short A "$domain" @8.8.8.8 2>/dev/null | tail -n1)
+    fi
+    if [[ -z "$domain_ip" ]] && command -v nslookup >/dev/null; then
+        domain_ip=$(nslookup "$domain" 8.8.8.8 2>/dev/null | awk '/^Address: /{print $2}' | tail -n1)
+    fi
+    if [[ -z "$domain_ip" ]] && command -v getent >/dev/null; then
+        domain_ip=$(getent hosts "$domain" 2>/dev/null | awk '{print $1}' | head -n1)
+    fi
+    if [[ -z "$domain_ip" ]]; then
+        warn "无法解析 $domain，请确认 DNS 已添加 A 记录"
+        return 1
+    fi
+    info "域名解析 IP: $domain_ip"
+    if [[ "$server_ip" == "$domain_ip" ]]; then ok "DNS 解析正确"; return 0; fi
+    warn "域名解析 IP ($domain_ip) 与本机 IP ($server_ip) 不一致，证书申请大概率失败"
+    if [[ -t 0 ]]; then
+        local ans=""
+        read -r -p "是否仍然继续申请证书？[y/N]: " ans
+        [[ "$ans" =~ ^[Yy]$ ]] && return 0
+    fi
+    return 1
+}
+
+port_busy() {
+    ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${1}$"
+}
+
+restart_panel() {
+    if command -v systemctl >/dev/null && [[ -d /run/systemd/system ]]; then
+        systemctl restart x-ui
+        sleep 3
+    else
+        pkill -f "$XUI_HOME/x-ui" 2>/dev/null
+        ( cd "$XUI_HOME" && nohup "$XUI_HOME/x-ui" >/var/log/x-ui.out 2>&1 & )
+        sleep 2
+    fi
+}
+
+setup_certificate() {
+    local domain="$1"
+    local acme="$HOME/.acme.sh/acme.sh"
+    local dir="/root/cert/$domain"
+    local mode="" rc=0
+
+    info "安装/检查 acme.sh ..."
+    if [[ ! -x "$acme" ]]; then
+        curl -fsSL https://get.acme.sh | sh -s email="admin@$domain" >/dev/null 2>&1
+    fi
+    [[ -x "$acme" ]] || { err "acme.sh 安装失败，跳过证书配置"; return 1; }
+    "$acme" --set-default-ca --server letsencrypt >/dev/null 2>&1
+
+    if ! port_busy 80; then
+        mode="standalone"
+    elif ! port_busy 443; then
+        mode="alpn"
+    else
+        err "80 与 443 端口均被占用，无法自动签发证书（面板仍可用 HTTP 访问）"
+        warn "请释放 80 端口后重新运行本脚本，或手动签发后执行: x-ui cert -webCert $dir/fullchain.pem -webCertKey $dir/privkey.pem"
+        return 1
+    fi
+    info "验证方式: $mode"
+
+    info "正在向 Let's Encrypt 申请证书（约 10~60 秒）..."
+    if [[ "$mode" == "standalone" ]]; then
+        "$acme" --issue -d "$domain" --standalone --httpport 80 --force
+    else
+        "$acme" --issue -d "$domain" --alpn --tlsport 443 --force
+    fi
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+        err "证书签发失败（常见原因：DNS 未生效 / 80、443 被占用 / Let's Encrypt 频率限制）"
+        rm -rf "$HOME/.acme.sh/$domain" 2>/dev/null
+        return 1
+    fi
+    ok "证书签发成功"
+
+    mkdir -p "$dir"
+    "$acme" --installcert -d "$domain" \
+        --key-file "$dir/privkey.pem" \
+        --fullchain-file "$dir/fullchain.pem" \
+        --reloadcmd "systemctl restart x-ui" >/dev/null 2>&1
+    if [[ ! -f "$dir/fullchain.pem" || ! -f "$dir/privkey.pem" ]]; then
+        err "证书文件安装失败"
+        return 1
+    fi
+    chmod 600 "$dir/privkey.pem"; chmod 644 "$dir/fullchain.pem"
+    "$acme" --upgrade --auto-upgrade >/dev/null 2>&1
+    ok "证书已安装: $dir（acme.sh 已开启自动续期 + 续期后自动重启面板）"
+
+    cd "$XUI_HOME" || return 1
+    if ! "$XUI_HOME/x-ui" cert -webCert "$dir/fullchain.pem" -webCertKey "$dir/privkey.pem" >/dev/null 2>&1; then
+        err "写入面板证书失败"
+        return 1
+    fi
+    restart_panel
+    ok "面板已启用 HTTPS"
+    return 0
+}
+
+info "步骤 1/10: 检查依赖..."
 if command -v apt-get >/dev/null; then
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl tar ca-certificates >/dev/null 2>&1 || true
@@ -39,7 +154,7 @@ fi
 command -v curl >/dev/null || die "缺少 curl"
 command -v tar  >/dev/null || die "缺少 tar"
 
-info "步骤 2/9: 下载安装包..."
+info "步骤 2/10: 下载安装包..."
 TMP_DIR=$(mktemp -d /tmp/x-panel-install.XXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 dl() { # dl <url> <输出文件>
@@ -63,7 +178,7 @@ if dl "$BASE_URL/SHA256SUMS" "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
     fi
 fi
 
-info "步骤 3/9: 安装文件到 $XUI_HOME ..."
+info "步骤 3/10: 安装文件到 $XUI_HOME ..."
 mkdir -p "$XUI_HOME" "$XUI_DB"
 if [[ -x "$XUI_HOME/x-ui" ]]; then
     cp -f "$XUI_HOME/x-ui" "$XUI_HOME/x-ui.bak.$(date +%Y%m%d%H%M%S)" && warn "已备份旧二进制"
@@ -79,7 +194,7 @@ if [[ -d "$TMP_DIR/bin" ]]; then
 fi
 ok "主程序与 xray 内核安装完成"
 
-info "步骤 4/9: 生成端口/路径/凭据..."
+info "步骤 4/10: 生成端口/路径/凭据..."
 pick_port() {
     local p
     for _ in $(seq 1 50); do
@@ -99,7 +214,7 @@ cd "$XUI_HOME" || die "无法进入 $XUI_HOME"
     || warn "初始设置写入失败（数据库可能已存在），可用 x-ui setting 手动修改"
 ok "端口 $PANEL_PORT | 路径 $WEB_PATH | 用户 $USERNAME"
 
-info "步骤 5/9: 配置并启动服务..."
+info "步骤 5/10: 配置并启动服务..."
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=X-Panel Service
@@ -134,7 +249,7 @@ else
     sleep 3
 fi
 
-info "步骤 6/9: 防火墙端口..."
+info "步骤 6/10: 防火墙端口..."
 if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
     ufw allow "$PANEL_PORT" >/dev/null 2>&1 && ok "ufw 已放行 $PANEL_PORT"
 elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
@@ -144,8 +259,46 @@ else
     warn "未检测到活动防火墙；云服务器请在安全组放行 $PANEL_PORT"
 fi
 
+# ---------- 7. 域名与 HTTPS 证书 ----------
+CERT_OK=0
+DOMAIN="${DOMAIN:-}"
+if [[ "${SKIP_CERT:-0}" != "1" ]]; then
+    info "步骤 7/10: 域名与 HTTPS 证书..."
+    if [[ -z "$DOMAIN" && -t 0 ]]; then
+        printf '\033[33m是否使用域名并自动签发免费证书（Let\x27s Encrypt）？[y/N]: \033[0m'
+        read -r USE_DOMAIN
+        if [[ "$USE_DOMAIN" =~ ^[Yy]$ ]]; then
+            tries=0
+            while (( tries < 3 )); do
+                tries=$((tries + 1))
+                printf '\033[33m请输入已解析到本机的域名（如 panel.example.com）: \033[0m'
+                read -r DOMAIN || { DOMAIN=""; break; }
+                if [[ -z "$DOMAIN" ]]; then DOMAIN=""; break; fi
+                if ! validate_domain "$DOMAIN"; then err "域名格式不正确（第 $tries/3 次）"; DOMAIN=""; continue; fi
+                if ! check_domain_dns "$DOMAIN"; then err "DNS 检查未通过（第 $tries/3 次）"; DOMAIN=""; continue; fi
+                break
+            done
+            if [[ -z "$DOMAIN" ]]; then
+                warn "未获得有效域名，跳过证书配置，面板将使用 HTTP 访问"
+            fi
+        fi
+    elif [[ -n "$DOMAIN" ]]; then
+        info "使用指定域名: $DOMAIN"
+        validate_domain "$DOMAIN" || { err "域名格式不正确: $DOMAIN"; DOMAIN=""; }
+    fi
+
+    if [[ -n "$DOMAIN" ]]; then
+        setup_certificate "$DOMAIN" && CERT_OK=1
+    else
+        info "未使用域名：面板将通过 http://IP:$PANEL_PORT$WEB_PATH 访问"
+        warn "如需 HTTPS，可在面板「面板设置」中上传证书，或重跑本脚本选择域名"
+    fi
+else
+    info "步骤 7/10: 已跳过证书配置"
+fi
+
 if [[ "${SKIP_HARDEN:-0}" != "1" ]]; then
-    info "步骤 7/9: 日志治理（内置配置，无需额外下载）..."
+    info "步骤 8/10: 日志治理（内置配置，无需额外下载）..."
     cat > /etc/logrotate.d/x-ui <<'XUILR'
 # X-Panel / Xray 日志轮转
 # 注意：xray 进程一直持有日志文件描述符且不会重开，必须用 copytruncate
@@ -282,29 +435,31 @@ XUIGUARD
     fi
         ok "日志治理完成（logrotate + journald 500M + 每小时守卫）"
 else
-    info "步骤 7/9: 已跳过日志治理"
+    info "步骤 8/10: 已跳过日志治理"
 fi
 
 if [[ "${SKIP_BBR:-0}" != "1" ]]; then
-    info "步骤 8/9: 启用 BBR..."
+    info "步骤 9/10: 启用 BBR..."
     modprobe tcp_bbr 2>/dev/null || true
     grep -q '^net.core.default_qdisc=fq' /etc/sysctl.conf 2>/dev/null || echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf
     grep -q '^net.ipv4.tcp_congestion_control=bbr' /etc/sysctl.conf 2>/dev/null || echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf
     sysctl -p >/dev/null 2>&1
     ok "BBR: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
 else
-    info "步骤 8/9: 已跳过 BBR"
+    info "步骤 9/10: 已跳过 BBR"
 fi
 
-info "步骤 9/9: 汇总..."
+info "步骤 10/10: 汇总..."
 IP=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 5 ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
-SCHEME=http
-CERT_HINT=""
-if [[ -n "${DOMAIN:-}" && -f "/root/cert/$DOMAIN/fullchain.pem" ]]; then
-    "$XUI_HOME/x-ui" cert -webCert "/root/cert/$DOMAIN/fullchain.pem" -webCertKey "/root/cert/$DOMAIN/privkey.pem" >/dev/null 2>&1 \
-        && { systemctl restart x-ui 2>/dev/null; SCHEME=https; CERT_HINT="（已绑定证书 $DOMAIN）"; }
+if [[ "$CERT_OK" == "1" && -n "$DOMAIN" ]]; then
+    SCHEME=https
+    URL="https://$DOMAIN:$PANEL_PORT$WEB_PATH"
+    CERT_HINT="（HTTPS 已启用，证书自动续期）"
+else
+    SCHEME=http
+    URL="http://$IP:$PANEL_PORT$WEB_PATH"
+    CERT_HINT="（HTTP，未配置证书）"
 fi
-URL="${SCHEME}://${DOMAIN:-$IP}:${PANEL_PORT}${WEB_PATH}"
 cat > "$CRED_FILE" <<EOF
 ========================================
 X-Panel 安装信息  $(date '+%F %T')
