@@ -7,13 +7,6 @@ X-Panel（3x-ui 定制版）二进制分发仓库。**源码不在此仓库**，
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main/install.sh)
 ```
-
-国内访问 raw 较慢时可用镜像：
-
-```bash
-bash <(curl -fsSL https://xui.keyucc.top/dl/install.sh)
-```
-
 ## 安装内容
 
 - 静态编译的 `x-ui`（musl 静态链接，无 glibc 依赖，linux/amd64）
