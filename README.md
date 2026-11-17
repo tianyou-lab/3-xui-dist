@@ -10,11 +10,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main/
 
 安装过程会询问**是否使用域名并自动签发 Let's Encrypt 证书**；安装完成后自动开启证书续期（acme.sh cron，续期后自动重启面板）。
 
-国内访问 raw 较慢时可用镜像：
-
-```bash
-bash <(curl -fsSL https://xui.keyucc.top/dl/install.sh)
-```
 
 ## 已装面板，只想补证书
 
@@ -47,4 +42,4 @@ bash <(curl -fsSL https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main/
 
 ## 环境变量
 
-`PANEL_PORT` `WEB_PATH` `USERNAME` `PASSWORD` `DOMAIN` `SKIP_CERT=1` `SKIP_HARDEN=1` `SKIP_BBR=1` `GH_TAG` `MIRROR`
+`PANEL_PORT` `WEB_PATH` `USERNAME` `PASSWORD` `DOMAIN` `SKIP_CERT=1` `SKIP_HARDEN=1` `SKIP_BBR=1` `GH_TAG` 

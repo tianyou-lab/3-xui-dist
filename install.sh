@@ -5,7 +5,7 @@
 # 交互式：安装过程中会询问「是否使用域名并自动签发免费证书」
 # 可选环境变量：PANEL_PORT WEB_PATH USERNAME PASSWORD DOMAIN（给了域名则自动申请证书）
 #               SKIP_CERT=1 跳过证书  SKIP_HARDEN=1 SKIP_BBR=1
-#               GH_OWNER GH_REPO GH_TAG TOKEN BASE_URL MIRROR
+#               GH_OWNER GH_REPO GH_TAG TOKEN BASE_URL
 set -uo pipefail
 
 # 默认从 GitHub Release 下载（可通过环境变量覆盖）
@@ -228,11 +228,7 @@ dl() { # dl <url> <输出文件>
         curl -fsSL --retry 3 -o "$2" "$1"
     fi
 }
-MIRROR="${MIRROR:-https://xui.keyucc.top/dl}"   # 备用镜像（可选）
-if ! dl "$BASE_URL/$PKG_NAME" "$TMP_DIR/$PKG_NAME"; then
-    warn "GitHub 下载失败，尝试备用镜像 $MIRROR ..."
-    dl "$MIRROR/$PKG_NAME" "$TMP_DIR/$PKG_NAME" || die "下载安装包失败（GitHub 与镜像均不可用）"
-fi
+dl "$BASE_URL/$PKG_NAME" "$TMP_DIR/$PKG_NAME" || die "下载安装包失败: $BASE_URL/$PKG_NAME"
 if dl "$BASE_URL/SHA256SUMS" "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
     EXPECT=$(grep -F "$PKG_NAME" "$TMP_DIR/SHA256SUMS" | awk '{print $1}')
     if [[ -n "$EXPECT" ]]; then
