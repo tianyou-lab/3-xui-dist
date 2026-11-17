@@ -514,44 +514,86 @@ else
 fi
 
 info "步骤 10/10: 汇总..."
-IP=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 5 ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
+SERVER_IP=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 5 https://ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
 if [[ "$CERT_OK" == "1" && -n "$DOMAIN" ]]; then
-    SCHEME=https
-    URL="https://$DOMAIN:$PANEL_PORT$WEB_PATH"
-    CERT_HINT="（HTTPS 已启用，证书自动续期）"
+    HTTPS_URL="https://$DOMAIN:$PANEL_PORT$WEB_PATH"
+    CERT_STATE=1
 else
-    SCHEME=http
-    URL="http://$IP:$PANEL_PORT$WEB_PATH"
-    CERT_HINT="（HTTP，未配置证书）"
+    HTTPS_URL=""
+    CERT_STATE=0
 fi
-cat > "$CRED_FILE" <<EOF
+HTTP_URL="http://$SERVER_IP:$PANEL_PORT$WEB_PATH"
+
+echo ""
+echo "=========== 安装完成 ==========="
+echo "X-Panel面板和Xray启动成功！"
+echo "----------------------------------------------"
+echo "---->>> 以下为面板重要信息，请自行记录保存 <<<----"
+echo "================================="
+echo "📋 面板登录信息："
+echo ""
+if [[ $CERT_STATE -eq 1 ]]; then
+    echo "🌐 HTTPS登录地址: $HTTPS_URL"
+    echo "🌐 备用HTTP地址: $HTTP_URL"
+    echo "✅ SSL证书已自动申请并配置（acme.sh 自动续期）"
+    echo "✅ 可直接复制上述HTTPS地址登录面板"
+else
+    echo "🌐 HTTP登录地址: $HTTP_URL"
+    echo "⚠️  未配置SSL证书，建议使用HTTPS访问"
+fi
+echo ""
+echo "🔐 用户名: $USERNAME"
+echo "🔑 密码: $PASSWORD"
+echo "🔌 面板端口: $PANEL_PORT"
+echo "🔗 访问路径: $WEB_PATH"
+echo "================================="
+echo ""
+echo "⚠️  重要提示："
+echo "1. 以上凭据为随机生成，请立即保存！"
+echo "2. 凭据已保存到: $CRED_FILE"
+echo "3. 丢失凭据可通过 x-ui 命令重置"
+echo "================================="
+
+# 保存凭据到文件
+cat > "$CRED_FILE" <<CREDEOF
 ========================================
-X-Panel 安装信息  $(date '+%F %T')
+X-Panel v25.10.13 登录凭据
 ========================================
-登录地址: $URL
-用户名:   $USERNAME
-密码:     $PASSWORD
-端口:     $PANEL_PORT
+生成时间: $(date '+%Y-%m-%d %H:%M:%S')
+
+用户名: $USERNAME
+密码: $PASSWORD
+端口: $PANEL_PORT
 访问路径: $WEB_PATH
-证书:     ${CERT_HINT:-未配置（HTTP）}
 
-常用命令:
-  systemctl status x-ui
-  systemctl restart x-ui
-  x-ui                      交互菜单
-  journalctl -u x-ui -f
-  /usr/local/bin/xui-log-guard.sh   日志/磁盘巡检
 ========================================
-EOF
-chmod 600 "$CRED_FILE"
+登录地址:
+========================================
+CREDEOF
 
-echo ""
-ok "安装完成 $CERT_HINT"
-echo "  登录地址: $URL"
-echo "  用户名:   $USERNAME"
-echo "  密码:     $PASSWORD"
-echo "  凭据文件: $CRED_FILE"
-echo ""
+if [[ $CERT_STATE -eq 1 ]]; then
+    echo "HTTPS: $HTTPS_URL" >> "$CRED_FILE"
+    echo "HTTP:  $HTTP_URL" >> "$CRED_FILE"
+else
+    echo "HTTP:  $HTTP_URL" >> "$CRED_FILE"
+fi
+
+cat >> "$CRED_FILE" <<CREDEOF
+
+========================================
+安全提示:
+========================================
+1. 请妥善保管此文件
+2. 首次登录后建议修改密码
+3. 定期更新访问路径提高安全性
+4. 可使用命令查看: cat /root/x-panel-credentials.txt
+
+========================================
+CREDEOF
+
+chmod 600 "$CRED_FILE"
+echo "[INFO] 凭据已保存到 $CRED_FILE"
+
 warn "云服务器请在控制台安全组放行端口 $PANEL_PORT（TCP）"
 
 # 版权信息
@@ -568,8 +610,7 @@ echo "版权声明: 禁止用于商业用途"
 # 开发者信息
 echo "============================================="
 echo "脚本名称: X-Panel自动化安装工具"
-echo "贡献者: 天道酬勤  欢迎TG交流vx：wzhr000"
+echo "贡献者: 天道酬勤  欢迎TG交流VX：wzhr000"
 echo "版本: v2026117.0"
 echo "============================================="
 echo "安装完成！请访问面板进行配置"
-
