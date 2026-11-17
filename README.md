@@ -28,6 +28,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main/
 
 检查面板服务、xray 进程与配置、监听端口、防火墙、Reality 伪装目标可达性、出网连通性与错误日志。
 
+## 链接连不上？校验分享链接
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main/checklink.sh?$(date +%s)") "vless://你的链接"
+```
+
+逐项比对：网络类型 / 安全类型 / UUID / flow / SNI / shortId / pbk / 域名解析，直接指出哪一项不匹配。
+
 ## 安装内容
 
 - 静态编译的 `x-ui`（musl 静态链接，无 glibc 依赖，linux/amd64）
