@@ -54,6 +54,17 @@ bash <(curl -fsSL https://cdn.jsdelivr.net/gh/tianyou-lab/3-xui-dist@main/cdnset
 自动创建 VLESS + WebSocket 入站（源站明文 80 端口），并输出 CF 配置步骤与 `wss://` 客户端链接。
 客户端只连 Cloudflare 的 443，不依赖服务器 IP 直连。
 
+## 买 VPS 前检测 IP 是否被墙
+
+国内 Windows 上运行（最准）：
+
+```powershell
+Invoke-WebRequest https://cdn.jsdelivr.net/gh/tianyou-lab/3-xui-dist@main/testip.ps1 -OutFile testip.ps1
+.\testip.ps1 -Ips 1.2.3.4,5.6.7.8
+```
+
+判读：全通=可用；ICMP 通但 TCP 全封=被墙（换端口无用）；部分端口不通=端口级封锁。
+
 ## 安装内容
 
 - 静态编译的 `x-ui`（musl 静态链接，无 glibc 依赖，linux/amd64）
