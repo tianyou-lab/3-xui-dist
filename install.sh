@@ -271,7 +271,7 @@ PANEL_PORT="${PANEL_PORT:-$(pick_port)}"
 WEB_PATH="${WEB_PATH:-/$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 12)/}"
 [[ "$WEB_PATH" == /* ]] || WEB_PATH="/$WEB_PATH"
 [[ "$WEB_PATH" == */ ]] || WEB_PATH="$WEB_PATH/"
-USERNAME="${USERNAME:-admin}"
+USERNAME="${USERNAME:-$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 10)}"
 PASSWORD="${PASSWORD:-$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 16)}"
 cd "$XUI_HOME" || die "无法进入 $XUI_HOME"
 "$XUI_HOME/x-ui" setting -port "$PANEL_PORT" -webBasePath "$WEB_PATH" -username "$USERNAME" -password "$PASSWORD" >/dev/null 2>&1 \
@@ -553,3 +553,23 @@ echo "  密码:     $PASSWORD"
 echo "  凭据文件: $CRED_FILE"
 echo ""
 warn "云服务器请在控制台安全组放行端口 $PANEL_PORT（TCP）"
+
+# 版权信息
+echo ""
+echo "============================================="
+echo " 版权声明:"
+echo " 1. 允许自由使用和修改"
+echo " 2. 禁止用于非法活动"
+echo " 3. 二次发布需保留此声明"
+echo "============================================="
+echo "感谢使用 X-Panel自动化安装工具"
+echo "版权声明: 禁止用于商业用途"
+
+# 开发者信息
+echo "============================================="
+echo "脚本名称: X-Panel自动化安装工具"
+echo "贡献者: 天道酬勤  欢迎TG交流vx：wzhr000"
+echo "版本: v2026117.0"
+echo "============================================="
+echo "安装完成！请访问面板进行配置"
+
