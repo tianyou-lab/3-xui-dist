@@ -29,6 +29,7 @@ PY
 }
 
 echo "==================== X-Panel 连接诊断 ===================="
+echo "脚本版本: v2.1（含入站参数展示 + Reality 回退自测）"
 date '+时间: %F %T %Z'
 
 PUBIP=$(curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null || curl -fsS --max-time 8 https://ifconfig.me 2>/dev/null || echo "")
