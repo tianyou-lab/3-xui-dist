@@ -20,6 +20,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main/
 
 不会改动端口/路径/密码，只申请证书 → 写入面板 → 重启 → 输出 https 地址。
 
+## 连不上？一键诊断
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/tianyou-lab/3-xui-dist/main/diag.sh)
+```
+
+检查面板服务、xray 进程与配置、监听端口、防火墙、Reality 伪装目标可达性、出网连通性与错误日志。
+
 ## 安装内容
 
 - 静态编译的 `x-ui`（musl 静态链接，无 glibc 依赖，linux/amd64）
